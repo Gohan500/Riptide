@@ -343,10 +343,6 @@ namespace Riptide
             message.Release();
         }
 
-        struct test
-        {
-            public byte b;
-        }
         /// <summary>Sends a message to a given client.</summary>
         /// <param name="message">The message to send.</param>
         /// <param name="toClient">The numeric ID of the client to send the message to.</param>

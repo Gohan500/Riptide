@@ -1,7 +1,10 @@
 {
   "ExpandedNodes": [
-    ""
+    "",
+    "\\RiptideNetworking",
+    "\\RiptideNetworking\\RiptideNetworking",
+    "\\RiptideNetworking\\RiptideNetworking\\Utils"
   ],
-  "SelectedNode": "\\Console.sln",
+  "SelectedNode": "\\RiptideNetworking\\RiptideNetworking.sln",
   "PreviewInSolutionExplorer": false
 }
