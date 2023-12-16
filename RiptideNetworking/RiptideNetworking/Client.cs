@@ -70,8 +70,8 @@ namespace Riptide
         private Dictionary<ushort, Dictionary<ushort, MessageHandler>> groupHandlers;
         /// <summary>The underlying transport's client that is used for sending and receiving data.</summary>
         private IClient transport;
-        /// <summary>Custom data to include when connecting.</summary>
-        private byte[] connectBytes;
+        /// <summary>The message sent when connecting. May include custom data.</summary>
+        private Message connectMessage;
 
         /// <summary>Handles initial setup.</summary>
         /// <param name="transport">The transport to use for sending and receiving data.</param>
@@ -124,16 +124,15 @@ namespace Riptide
             if (useMessageHandlers)
                 CreateMessageHandlersDictionary();
 
+            connectMessage = Message.Create(MessageHeader.Connect);
             if (message != null)
             {
-                if (message.ReadLength != 0)
-                    RiptideLogger.Log(LogType.Error, LogName, $"Use the parameterless 'Message.Create()' overload when including data with a connection attempt!");
-                
-                connectBytes = message.GetBytes(message.WrittenLength);
+                if (message.ReadBits != 0)
+                    RiptideLogger.Log(LogType.Error, LogName, $"Use the parameterless 'Message.Create()' overload when setting connection attempt data!");
+
+                connectMessage.AddMessage(message);
                 message.Release();
             }
-            else
-                connectBytes = null;
 
             StartTime();
             Heartbeat();
@@ -204,11 +203,7 @@ namespace Riptide
                 // If still trying to connect, send connect messages instead of heartbeats
                 if (connectionAttempts < maxConnectionAttempts)
                 {
-                    Message message = Message.Create(MessageHeader.Connect);
-                    if (connectBytes != null)
-                        message.AddBytes(connectBytes, false);
-
-                    Send(message);
+                    Send(connectMessage, false);
                     connectionAttempts++;
                 }
                 else
@@ -288,7 +283,7 @@ namespace Riptide
                     OnClientDisconnected(message.GetUShort());
                     break;
                 default:
-                    RiptideLogger.Log(LogType.Warning, LogName, $"Unexpected message header '{header}'! Discarding {message.WrittenLength} bytes.");
+                    RiptideLogger.Log(LogType.Warning, LogName, $"Unexpected message header '{header}'! Discarding {message.BytesInUse} bytes.");
                     break;
             }
 
@@ -296,13 +291,8 @@ namespace Riptide
         }
 
         /// <summary>Sends a message to the server.</summary>
-        /// <param name="message">The message to send.</param>
-        /// <param name="shouldRelease">Whether or not to return the message to the pool after it is sent.</param>
-        /// <remarks>
-        ///   If you intend to continue using the message instance after calling this method, you <i>must</i> set <paramref name="shouldRelease"/>
-        ///   to <see langword="false"/>. <see cref="Message.Release"/> can be used to manually return the message to the pool at a later time.
-        /// </remarks>
-        public void Send(Message message, bool shouldRelease = true) => connection.Send(message, shouldRelease);
+        /// <inheritdoc cref="Connection.Send(Message, bool)"/>
+        public ushort Send(Message message, bool shouldRelease = true) => connection.Send(message, shouldRelease);
 
         /// <summary>Disconnects from the server.</summary>
         public void Disconnect()
@@ -312,6 +302,13 @@ namespace Riptide
 
             Send(Message.Create(MessageHeader.Disconnect));
             LocalDisconnect(DisconnectReason.Disconnected);
+        }
+
+        /// <inheritdoc/>
+        internal override void Disconnect(Connection connection, DisconnectReason reason)
+        {
+            if (connection.IsConnected && connection.CanQualityDisconnect)
+                LocalDisconnect(reason);
         }
 
         /// <summary>Cleans up the local side of the connection.</summary>
@@ -359,6 +356,8 @@ namespace Riptide
         /// <summary>Invokes the <see cref="Connected"/> event.</summary>
         protected virtual void OnConnected()
         {
+            connectMessage.Release();
+            connectMessage = null;
             RiptideLogger.Log(LogType.Info, LogName, "Connected successfully!");
             Connected?.Invoke(this, EventArgs.Empty);
         }
@@ -368,6 +367,8 @@ namespace Riptide
         /// <param name="message">Additional data related to the failed connection attempt.</param>
         protected virtual void OnConnectionFailed(RejectReason reason, Message message = null)
         {
+            connectMessage.Release();
+            connectMessage = null;
             RiptideLogger.Log(LogType.Info, LogName, $"Connection to server failed: {Helper.GetReasonString(reason)}.");
             ConnectionFailed?.Invoke(this, new ConnectionFailedEventArgs(reason, message));
         }
@@ -376,8 +377,8 @@ namespace Riptide
         /// <param name="message">The received message.</param>
         protected virtual void OnMessageReceived(Message message)
         {
-            ushort groupId = message.GetUShort();
-            ushort messageId = message.GetUShort();
+            ushort groupId = (ushort)message.GetVarULong();
+            ushort messageId = (ushort)message.GetVarULong();
             MessageReceived?.Invoke(this, new MessageReceivedEventArgs(connection, groupId, messageId, message));
 
             if (useMessageHandlers)

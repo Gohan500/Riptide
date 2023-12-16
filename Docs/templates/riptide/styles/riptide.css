@@ -192,18 +192,16 @@ p {
 }
 
 /* CODE BLOCKS */
-code a,
-code a:hover,
-code a:focus {
-    text-decoration: underline;
-}
-
 pre {
     font-size: 14px;
 }
 
 pre code {
     white-space: pre;
+}
+
+code.hljs {
+    padding: 3px 5px !important;
 }
 
 /* SEARCH */

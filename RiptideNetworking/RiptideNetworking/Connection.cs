@@ -1,4 +1,4 @@
-// This file is provided under The MIT License as part of RiptideNetworking.
+﻿// This file is provided under The MIT License as part of RiptideNetworking.
 // Copyright (c) Tom Weiland
 // For additional information please see the included LICENSE.md file or view it on GitHub:
 // https://github.com/RiptideNetworking/Riptide/blob/main/LICENSE.md
@@ -32,6 +32,8 @@ namespace Riptide
         public Action<ushort> NotifyLost;
         /// <summary>Invoked when a notify message is received.</summary>
         public Action<Message> NotifyReceived;
+        /// <summary>Invoked when the reliable message with the given sequence ID is successfully delivered.</summary>
+        public Action<ushort> ReliableDelivered;
 
         /// <summary>The connection's numeric ID.</summary>
         public ushort Id { get; internal set; }
@@ -53,10 +55,10 @@ namespace Riptide
                 _rtt = value;
             }
         }
-        private short _rtt = -1;
+        private short _rtt;
         /// <summary>The smoothed round trip time (ping) of the connection, in milliseconds. -1 if not calculated yet.</summary>
         /// <remarks>This value is slower to accurately represent lasting changes in latency than <see cref="RTT"/>, but it is less susceptible to changing drastically due to significant—but temporary—jumps in latency.</remarks>
-        public short SmoothRTT { get; private set; } = -1;
+        public short SmoothRTT { get; private set; }
         /// <summary>The time (in milliseconds) after which to disconnect if no heartbeats are received.</summary>
         public int TimeoutTime { get; set; }
         /// <summary>Whether or not the connection can time out.</summary>
@@ -72,8 +74,23 @@ namespace Riptide
             }
         }
         private bool _canTimeout;
+        /// <summary>Whether or not the connection can disconnect due to poor connection quality.</summary>
+        /// <remarks>When this is set to <see langword="false"/>, <see cref="MaxAvgSendAttempts"/>, <see cref="MaxSendAttempts"/>,
+        /// and <see cref="MaxNotifyLoss"/> are ignored and exceeding their values will not trigger a disconnection.</remarks>
+        public bool CanQualityDisconnect;
         /// <summary>The connection's metrics.</summary>
         public readonly ConnectionMetrics Metrics;
+        /// <summary>The maximum acceptable average number of send attempts it takes to deliver a reliable message. The connection
+        /// will be closed if this is exceeded more than <see cref="AvgSendAttemptsResilience"/> times in a row.</summary>
+        public int MaxAvgSendAttempts;
+        /// <summary>How many consecutive times <see cref="MaxAvgSendAttempts"/> can be exceeded before triggering a disconnect.</summary>
+        public int AvgSendAttemptsResilience;
+        /// <summary>The absolute maximum number of times a reliable message may be sent. A single message reaching this threshold will cause a disconnection.</summary>
+        public int MaxSendAttempts;
+        /// <summary>The maximum acceptable loss rate of notify messages. The connection will be closed if this is exceeded more than <see cref="NotifyLossResilience"/> times in a row.</summary>
+        public float MaxNotifyLoss;
+        /// <summary>How many consecutive times <see cref="MaxNotifyLoss"/> can be exceeded before triggering a disconnect.</summary>
+        public int NotifyLossResilience;
 
         /// <summary>The local peer this connection is associated with.</summary>
         internal Peer Peer { get; private set; }
@@ -87,17 +104,21 @@ namespace Riptide
         /// <summary>The sequencer for reliable messages.</summary>
         private readonly ReliableSequencer reliable;
         /// <summary>The currently pending reliably sent messages whose delivery has not been acknowledged yet. Stored by sequence ID.</summary>
-        private readonly Dictionary<ushort, PendingMessage> pendingMessages = new Dictionary<ushort, PendingMessage>();
+        private readonly Dictionary<ushort, PendingMessage> pendingMessages;
         /// <summary>The connection's current state.</summary>
         private ConnectionState state;
+        /// <summary>The number of consecutive times that the <see cref="MaxAvgSendAttempts"/> threshold was exceeded.</summary>
+        private int sendAttemptsViolations;
+        /// <summary>The number of consecutive times that the <see cref="MaxNotifyLoss"/> threshold was exceeded.</summary>
+        private int lossRateViolations;
         /// <summary>The time at which the last heartbeat was received from the other end.</summary>
         private long lastHeartbeat;
         /// <summary>The ID of the last ping that was sent.</summary>
         private byte lastPingId;
         /// <summary>The ID of the currently pending ping.</summary>
         private byte pendingPingId;
-        /// <summary>The stopwatch that tracks the time since the currently pending ping was sent.</summary>
-        private readonly System.Diagnostics.Stopwatch pendingPingStopwatch = new System.Diagnostics.Stopwatch();
+        /// <summary>The time at which the currently pending ping was sent.</summary>
+        private long pendingPingSendTime;
 
         /// <summary>Initializes the connection.</summary>
         protected Connection()
@@ -106,7 +127,16 @@ namespace Riptide
             notify = new NotifySequencer(this);
             reliable = new ReliableSequencer(this);
             state = ConnectionState.Connecting;
+            _rtt = -1;
+            SmoothRTT = -1;
             _canTimeout = true;
+            CanQualityDisconnect = true;
+            MaxAvgSendAttempts = 5;
+            AvgSendAttemptsResilience = 64;
+            MaxSendAttempts = 15;
+            MaxNotifyLoss = 0.05f; // 5%
+            NotifyLossResilience = 64;
+            pendingMessages = new Dictionary<ushort, PendingMessage>();
         }
 
         /// <summary>Initializes connection data.</summary>
@@ -125,36 +155,39 @@ namespace Riptide
         }
 
         /// <summary>Sends a message.</summary>
-        /// <inheritdoc cref="Client.Send(Message, bool)"/>
-        internal void Send(Message message, bool shouldRelease = true)
+        /// <param name="message">The message to send.</param>
+        /// <param name="shouldRelease">Whether or not to return the message to the pool after it is sent.</param>
+        /// <returns>For reliable and notify messages, the sequence ID that the message was sent with. 0 for unreliable messages.</returns>
+        /// <remarks>
+        ///   If you intend to continue using the message instance after calling this method, you <i>must</i> set <paramref name="shouldRelease"/>
+        ///   to <see langword="false"/>. <see cref="Message.Release"/> can be used to manually return the message to the pool at a later time.
+        /// </remarks>
+        public ushort Send(Message message, bool shouldRelease = true)
         {
-            if (message.SendMode == MessageSendMode.Unreliable)
+            ushort sequenceId = 0;
+            if (message.SendMode == MessageSendMode.Notify)
             {
-                Send(message.Bytes, message.WrittenLength);
-                Metrics.SentUnreliable(message.WrittenLength);
+                sequenceId = notify.InsertHeader(message);
+                int byteAmount = message.BytesInUse;
+                Buffer.BlockCopy(message.Data, 0, Message.ByteBuffer, 0, byteAmount);
+                Send(Message.ByteBuffer, byteAmount);
+                Metrics.SentNotify(byteAmount);
+            }
+            else if (message.SendMode == MessageSendMode.Unreliable)
+            {
+                int byteAmount = message.BytesInUse;
+                Buffer.BlockCopy(message.Data, 0, Message.ByteBuffer, 0, byteAmount);
+                Send(Message.ByteBuffer, byteAmount);
+                Metrics.SentUnreliable(byteAmount);
             }
             else
             {
-                ushort sequenceId = reliable.NextSequenceId;
+                sequenceId = reliable.NextSequenceId;
                 PendingMessage pendingMessage = PendingMessage.Create(sequenceId, message, this);
                 pendingMessages.Add(sequenceId, pendingMessage);
                 pendingMessage.TrySend();
                 Metrics.ReliableUniques++;
             }
-
-            if (shouldRelease)
-                message.Release();
-        }
-
-        /// <summary>Sends a notify message.</summary>
-        /// <param name="message">The message to send.</param>
-        /// <param name="shouldRelease">Whether or not to return the message to the pool after it is sent.</param>
-        /// <returns>The sequence ID of the sent message.</returns>
-        public ushort SendNotify(Message message, bool shouldRelease = true)
-        {
-            ushort sequenceId = notify.InsertHeader(message);
-            Send(message.Bytes, message.WrittenLength);
-            Metrics.SentNotify(message.WrittenLength);
 
             if (shouldRelease)
                 message.Release();
@@ -173,12 +206,12 @@ namespace Riptide
         /// <param name="message">The message instance to use.</param>
         internal void ProcessNotify(byte[] dataBuffer, int amount, Message message)
         {
-            notify.UpdateReceivedAcks(Converter.ToUShort(dataBuffer, 1), dataBuffer[3]);
+            notify.UpdateReceivedAcks(Converter.UShortFromBits(dataBuffer, Message.HeaderBits), Converter.ByteFromBits(dataBuffer, Message.HeaderBits + 16));
 
             Metrics.ReceivedNotify(amount);
-            if (notify.ShouldHandle(Converter.ToUShort(dataBuffer, 4)))
+            if (notify.ShouldHandle(Converter.UShortFromBits(dataBuffer, Message.HeaderBits + 24)))
             {
-                Array.Copy(dataBuffer, 1, message.Bytes, 1, amount - 1); // Copy payload
+                Buffer.BlockCopy(dataBuffer, 1, message.Data, 1, amount - 1); // Copy payload
                 NotifyReceived?.Invoke(message);
             }
             else
@@ -218,8 +251,10 @@ namespace Riptide
         {
             if (pendingMessages.TryGetValue(sequenceId, out PendingMessage pendingMessage))
             {
+                ReliableDelivered?.Invoke(sequenceId);
                 pendingMessage.Clear();
                 pendingMessages.Remove(sequenceId);
+                UpdateSendAttemptsViolations();
             }
         }
 
@@ -233,6 +268,32 @@ namespace Riptide
             }
         }
 
+        /// <summary>Checks the average send attempts (of reliable messages) and updates <see cref="sendAttemptsViolations"/> accordingly.</summary>
+        private void UpdateSendAttemptsViolations()
+        {
+            if (Metrics.RollingReliableSends.Mean > MaxAvgSendAttempts)
+            {
+                sendAttemptsViolations++;
+                if (sendAttemptsViolations >= AvgSendAttemptsResilience)
+                    Peer.Disconnect(this, DisconnectReason.PoorConnection);
+            }
+            else
+                sendAttemptsViolations = 0;
+        }
+
+        /// <summary>Checks the loss rate (of notify messages) and updates <see cref="lossRateViolations"/> accordingly.</summary>
+        private void UpdateLossViolations()
+        {
+            if (Metrics.RollingNotifyLossRate > MaxNotifyLoss)
+            {
+                lossRateViolations++;
+                if (lossRateViolations >= NotifyLossResilience)
+                    Peer.Disconnect(this, DisconnectReason.PoorConnection);
+            }
+            else
+                lossRateViolations = 0;
+        }
+
         #region Messages
         /// <summary>Sends an ack message for the given sequence ID.</summary>
         /// <param name="forSeqId">The sequence ID to acknowledge.</param>
@@ -244,7 +305,10 @@ namespace Riptide
             message.AddUShort(lastReceivedSeqId);
             message.AddUShort(receivedSeqIds.First16);
 
-            if (forSeqId != lastReceivedSeqId)
+            if (forSeqId == lastReceivedSeqId)
+                message.AddBool(false);
+            else
+                message.AddBool(true);
                 message.AddUShort(forSeqId);
             
             Send(message);
@@ -256,7 +320,7 @@ namespace Riptide
         {
             ushort remoteLastReceivedSeqId = message.GetUShort();
             ushort remoteAcksBitField = message.GetUShort();
-            ushort ackedSeqId = message.UnreadLength > 0 ? message.GetUShort() : remoteLastReceivedSeqId;
+            ushort ackedSeqId = message.GetBool() ? message.GetUShort() : remoteLastReceivedSeqId;
 
             ClearMessage(ackedSeqId);
             reliable.UpdateReceivedAcks(remoteLastReceivedSeqId, remoteAcksBitField);
@@ -337,7 +401,7 @@ namespace Riptide
         internal void SendHeartbeat()
         {
             pendingPingId = lastPingId++;
-            pendingPingStopwatch.Restart();
+            pendingPingSendTime = Peer.CurrentTime;
 
             Message message = Message.Create(MessageHeader.Heartbeat);
             message.AddByte(pendingPingId);
@@ -353,7 +417,7 @@ namespace Riptide
             byte pingId = message.GetByte();
 
             if (pendingPingId == pingId)
-                RTT = (short)Math.Max(1f, pendingPingStopwatch.ElapsedMilliseconds);
+                RTT = (short)Math.Max(1, Peer.CurrentTime - pendingPingSendTime);
 
             ResetTimeout();
         }
@@ -367,6 +431,7 @@ namespace Riptide
         {
             Metrics.DeliveredNotify();
             NotifyDelivered?.Invoke(sequenceId);
+            UpdateLossViolations();
         }
         
         /// <summary>Invokes the <see cref="NotifyLost"/> event.</summary>
@@ -375,6 +440,7 @@ namespace Riptide
         {
             Metrics.LostNotify();
             NotifyLost?.Invoke(sequenceId);
+            UpdateLossViolations();
         }
         #endregion
 
@@ -427,9 +493,8 @@ namespace Riptide
             internal ushort InsertHeader(Message message)
             {
                 ushort sequenceId = NextSequenceId;
-                Converter.FromUShort(lastReceivedSeqId, message.Bytes, 1); // Ack sequence ID
-                message.Bytes[3] = receivedSeqIds.First8;                  // Acks bitfield
-                Converter.FromUShort(sequenceId, message.Bytes, 4);        // Insert sequence ID
+                ulong notifyBits = lastReceivedSeqId | ((ulong)receivedSeqIds.First8 << (2 * Converter.BitsPerByte)) | ((ulong)sequenceId << (3 * Converter.BitsPerByte));
+                message.SetBits(notifyBits, 5 * Converter.BitsPerByte, Message.HeaderBits);
                 return sequenceId;
             }
 
@@ -540,13 +605,6 @@ namespace Riptide
                 if (sequenceGap > 0)
                 {
                     // The latest sequence ID that the other end has received is newer than the previous one
-                    for (int i = 0; i < 16; i++)
-                    {
-                        // Clear any messages that have been newly acknowledged
-                        if (!ackedSeqIds.IsSet(i + 1) && (remoteReceivedSeqIds & (1 << (sequenceGap + i))) != 0)
-                            connection.ClearMessage((ushort)(lastAckedSeqId - (i + 1)));
-                    }
-
                     if (!ackedSeqIds.HasCapacityFor(sequenceGap, out int overflow))
                     {
                         for (int i = 0; i < overflow; i++)
@@ -560,9 +618,17 @@ namespace Riptide
                     }
 
                     ackedSeqIds.ShiftBy(sequenceGap);
-                    ackedSeqIds.Combine(remoteReceivedSeqIds);
-                    ackedSeqIds.Set(sequenceGap); // Ensure that the bit corresponding to the previous ack is set
                     lastAckedSeqId = remoteLastReceivedSeqId;
+
+                    for (int i = 0; i < 16; i++)
+                    {
+                        // Clear any messages that have been newly acknowledged
+                        if (!ackedSeqIds.IsSet(i + 1) && (remoteReceivedSeqIds & (1 << i)) != 0)
+                            connection.ClearMessage((ushort)(lastAckedSeqId - (i + 1)));
+                    }
+
+                    ackedSeqIds.Combine(remoteReceivedSeqIds);
+                    ackedSeqIds.Set(sequenceGap); // Ensure that the bit corresponding to the previous acked sequence ID is set
                     connection.ClearMessage(remoteLastReceivedSeqId);
                 }
                 else if (sequenceGap < 0)

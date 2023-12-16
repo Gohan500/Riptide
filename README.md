@@ -12,15 +12,15 @@ It provides functionality for establishing connections and sending data back and
 
 ## Getting Started
 
-Check out the documentation for [installation instructions](https://riptide.tomweiland.net/manual/overview/installation.html) and a [guide on setting up the basics](https://riptide.tomweiland.net/manual/overview/getting-started.html).
+Check out the documentation for [installation instructions](https://riptide.tomweiland.net/manual/overview/installation.html) and a [guide on setting up the basics](https://riptide.tomweiland.net/manual/overview/get-started.html).
 
-For a video tutorial on how to set up Riptide (using v1.1.0) in your project, see [this video](https://youtu.be/6kWNZOFcFQw). You can use the [upgrade guides](https://riptide.tomweiland.net/manual/updates/guides/updating-to-v2.html) to update your project to newer versions afterwards.
+For a video tutorial on how to set up Riptide (using v1.1.0) in your project, see [this video](https://youtu.be/6kWNZOFcFQw). You can use the [upgrade guides](https://riptide.tomweiland.net/manual/updates/guides/update-to-v2.html) to update your project to newer versions afterwards.
 
 ## Low-Level Transports
 
 - [UDP Transport](RiptideNetworking/RiptideNetworking/Transports/Udp) (built-in)
 - [TCP Transport](RiptideNetworking/RiptideNetworking/Transports/Tcp) (built-in)
-- [Steam Transport](https://github.com/RiptideNetworking/SteamTransport) (in development)
+- [Steam Transport](https://github.com/RiptideNetworking/SteamTransport)
 
 ## Implementations in Other Languages
 
@@ -37,7 +37,7 @@ Community bug reports, feature requests, and pull requests are welcome and appre
 
 ## Donate
 
-Riptide is 100% free to use, but if you'd like to financially support Riptide's development and get early access to new features, you can do so through [GitHub Sponsors](https://github.com/sponsors/tom-weiland).
+Riptide is 100% free to use, but if you'd like to financially support Riptide's development you can do so through [GitHub Sponsors](https://github.com/sponsors/tom-weiland).
 
 ## License
 

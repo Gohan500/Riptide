@@ -48,7 +48,9 @@ namespace Riptide
         /// <summary>The server shut down.</summary>
         ServerStopped,
         /// <summary>The disconnection was initiated by the client.</summary>
-        Disconnected
+        Disconnected,
+        /// <summary>The connection's loss and/or resend rates exceeded the maximum acceptable thresholds, or a reliably sent message could not be delivered.</summary>
+        PoorConnection
     }
 
     /// <summary>Provides base functionality for <see cref="Server"/> and <see cref="Client"/>.</summary>
@@ -155,33 +157,32 @@ namespace Riptide
         /// <summary>Handles data received by the transport.</summary>
         protected void HandleData(object _, DataReceivedEventArgs e)
         {
-            MessageHeader header = (MessageHeader)e.DataBuffer[0];
-            Message message = Message.Create(header, e.Amount);
+            Message message = Message.Create().Init(e.DataBuffer[0], e.Amount, out MessageHeader header);
             
-            if (header == MessageHeader.Notify)
+            if (message.SendMode == MessageSendMode.Notify)
             {
-                if (e.Amount < Message.NotifyHeaderSize)
+                if (e.Amount < Message.MinNotifyBytes)
                     return;
 
                 e.FromConnection.ProcessNotify(e.DataBuffer, e.Amount, message);
             }
             else if (message.SendMode == MessageSendMode.Unreliable)
             {
-                if (e.Amount > Message.UnreliableHeaderSize) // Only bother with the array copy if there is more than 1 byte in the packet (1 or less means no payload for a reliably sent packet)
-                    Array.Copy(e.DataBuffer, 1, message.Bytes, 1, e.Amount - 1);
+                if (e.Amount > Message.MinUnreliableBytes)
+                    Buffer.BlockCopy(e.DataBuffer, 1, message.Data, 1, e.Amount - 1);
 
                 messagesToHandle.Enqueue(new MessageToHandle(message, header, e.FromConnection));
                 e.FromConnection.Metrics.ReceivedUnreliable(e.Amount);
             }
             else
             {
-                if (e.Amount < Message.ReliableHeaderSize)
+                if (e.Amount < Message.MinReliableBytes)
                     return;
 
                 e.FromConnection.Metrics.ReceivedReliable(e.Amount);
-                if (e.FromConnection.ShouldHandle(Converter.ToUShort(e.DataBuffer, 1)))
+                if (e.FromConnection.ShouldHandle(Converter.UShortFromBits(e.DataBuffer, Message.HeaderBits)))
                 {
-                    Array.Copy(e.DataBuffer, 1, message.Bytes, 1, e.Amount - 1);
+                    Buffer.BlockCopy(e.DataBuffer, 1, message.Data, 1, e.Amount - 1);
                     messagesToHandle.Enqueue(new MessageToHandle(message, header, e.FromConnection));
                 }
                 else
@@ -194,6 +195,11 @@ namespace Riptide
         /// <param name="header">The message's header type.</param>
         /// <param name="connection">The connection which the message was received on.</param>
         protected abstract void Handle(Message message, MessageHeader header, Connection connection);
+
+        /// <summary>Disconnects the connection in question. Necessary for connections to be able to initiate disconnections (like in the case of poor connection quality).</summary>
+        /// <param name="connection">The connection to disconnect.</param>
+        /// <param name="reason">The reason why the connection is being disconnected.</param>
+        internal abstract void Disconnect(Connection connection, DisconnectReason reason);
 
         /// <summary>Increases <see cref="ActiveCount"/>. For use when a new <see cref="Server"/> or <see cref="Client"/> is started.</summary>
         protected static void IncreaseActiveCount()

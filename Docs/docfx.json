@@ -21,8 +21,7 @@
         "content": [
             {
                 "files": [
-                    "api/**.yml",
-                    "api/index.md"
+                    "api/**.yml"
                 ]
             },
             {
@@ -73,8 +72,12 @@
             "_lang": "csharp"
         },
         "fileMetadata": {
-            "redirectUrl": {
-                "index.md": "manual/overview/about-riptide.html"
+            "_appTitle": {
+                "api/**/*.yml": "Riptide API Docs",
+                "manual/**/*.md": "Riptide Manual"
+            },
+            "isAPI": {
+                "api/**/*.yml": "true"
             }
         },
         "globalMetadataFiles": [],
@@ -83,17 +86,12 @@
             "default",
             "templates/riptide"
         ],
-        "xrefService": [
-            "https://xref.docs.microsoft.com/query?uid={uid}"
+        "xref": [
+            "https://learn.microsoft.com/en-us/dotnet/.xrefmap.json"
         ],
         "sitemap": {
             "baseUrl": "https://riptide.tomweiland.net/"
         },
-        "postProcessors": [],
-        "markdownEngineName": "markdig",
-        "noLangKeyword": false,
-        "keepFileLink": false,
-        "cleanupCacheHistory": false,
         "disableGitFeatures": false
     }
 }
