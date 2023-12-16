@@ -220,7 +220,7 @@ namespace Riptide
         /// <param name="message">Data that should be sent to the client being rejected. Use <see cref="Message.Create()"/> to get an empty message instance.</param>
         public void Reject(Connection connection, Message message = null)
         {
-            if (message != null && message.ReadLength != 0)
+            if (message != null && message.ReadBits != 0)
                 RiptideLogger.Log(LogType.Error, LogName, $"Use the parameterless 'Message.Create()' overload when setting rejection data!");
 
             if (pendingConnections.Remove(connection))
@@ -266,7 +266,7 @@ namespace Riptide
                 Message message = Message.Create(MessageHeader.Reject);
                 message.AddByte((byte)reason);
                 if (reason == RejectReason.Custom)
-                    message.AddBytes(rejectMessage.GetBytes(rejectMessage.WrittenLength), false);
+                    message.AddMessage(rejectMessage);
 
                 for (int i = 0; i < 3; i++) // Send the rejection message a few times to increase the odds of it arriving
                     connection.Send(message, false);
@@ -336,7 +336,7 @@ namespace Riptide
                         OnClientConnected(connection);
                     break;
                 default:
-                    RiptideLogger.Log(LogType.Warning, LogName, $"Unexpected message header '{header}'! Discarding {message.WrittenLength} bytes received from {connection}.");
+                    RiptideLogger.Log(LogType.Warning, LogName, $"Unexpected message header '{header}'! Discarding {message.BytesInUse} bytes received from {connection}.");
                     break;
             }
 
@@ -347,7 +347,7 @@ namespace Riptide
         /// <param name="message">The message to send.</param>
         /// <param name="toClient">The numeric ID of the client to send the message to.</param>
         /// <param name="shouldRelease">Whether or not to return the message to the pool after it is sent.</param>
-        /// <inheritdoc cref="Client.Send(Message, bool)"/>
+        /// <inheritdoc cref="Connection.Send(Message, bool)"/>
         public void Send(Message message, ushort toClient, bool shouldRelease = true)
         {
             if (clients.TryGetValue(toClient, out Connection connection))
@@ -357,13 +357,13 @@ namespace Riptide
         /// <param name="message">The message to send.</param>
         /// <param name="toClient">The client to send the message to.</param>
         /// <param name="shouldRelease">Whether or not to return the message to the pool after it is sent.</param>
-        /// <inheritdoc cref="Client.Send(Message, bool)"/>
-        public void Send(Message message, Connection toClient, bool shouldRelease = true) => toClient.Send(message, shouldRelease);
+        /// <inheritdoc cref="Connection.Send(Message, bool)"/>
+        public ushort Send(Message message, Connection toClient, bool shouldRelease = true) => toClient.Send(message, shouldRelease);
 
         /// <summary>Sends a message to all connected clients.</summary>
         /// <param name="message">The message to send.</param>
         /// <param name="shouldRelease">Whether or not to return the message to the pool after it is sent.</param>
-        /// <inheritdoc cref="Client.Send(Message, bool)"/>
+        /// <inheritdoc cref="Connection.Send(Message, bool)"/>
         public void SendToAll(Message message, bool shouldRelease = true)
         {
             foreach (Connection client in clients.Values)
@@ -376,7 +376,7 @@ namespace Riptide
         /// <param name="message">The message to send.</param>
         /// <param name="exceptToClientId">The numeric ID of the client to <i>not</i> send the message to.</param>
         /// <param name="shouldRelease">Whether or not to return the message to the pool after it is sent.</param>
-        /// <inheritdoc cref="Client.Send(Message, bool)"/>
+        /// <inheritdoc cref="Connection.Send(Message, bool)"/>
         public void SendToAll(Message message, ushort exceptToClientId, bool shouldRelease = true)
         {
             foreach (Connection client in clients.Values)
@@ -398,7 +398,7 @@ namespace Riptide
         /// <param name="message">Data that should be sent to the client being disconnected. Use <see cref="Message.Create()"/> to get an empty message instance.</param>
         public void DisconnectClient(ushort id, Message message = null)
         {
-            if (message != null && message.ReadLength != 0)
+            if (message != null && message.ReadBits != 0)
                 RiptideLogger.Log(LogType.Error, LogName, $"Use the parameterless 'Message.Create()' overload when setting disconnection data!");
 
             if (clients.TryGetValue(id, out Connection client))
@@ -415,7 +415,7 @@ namespace Riptide
         /// <param name="message">Data that should be sent to the client being disconnected. Use <see cref="Message.Create()"/> to get an empty message instance.</param>
         public void DisconnectClient(Connection client, Message message = null)
         {
-            if (message != null && message.ReadLength != 0)
+            if (message != null && message.ReadBits != 0)
                 RiptideLogger.Log(LogType.Error, LogName, $"Use the parameterless 'Message.Create()' overload when setting disconnection data!");
 
             if (clients.ContainsKey(client.Id))
@@ -425,6 +425,13 @@ namespace Riptide
             }
             else
                 RiptideLogger.Log(LogType.Warning, LogName, $"Couldn't disconnect client {client.Id} because it wasn't connected!");
+        }
+
+        /// <inheritdoc/>
+        internal override void Disconnect(Connection connection, DisconnectReason reason)
+        {
+            if (connection.IsConnected && connection.CanQualityDisconnect)
+                LocalDisconnect(connection, reason);
         }
 
         /// <summary>Cleans up the local side of the given connection.</summary>
@@ -509,7 +516,7 @@ namespace Riptide
             message.AddByte((byte)reason);
 
             if (reason == DisconnectReason.Kicked && disconnectMessage != null)
-                message.AddBytes(disconnectMessage.GetBytes(disconnectMessage.WrittenLength), false);
+                message.AddMessage(disconnectMessage);
 
             Send(message, client);
         }
@@ -558,8 +565,8 @@ namespace Riptide
         /// <param name="fromConnection">The client from which the message was received.</param>
         protected virtual void OnMessageReceived(Message message, Connection fromConnection)
         {
-            ushort groupId = message.GetUShort();
-            ushort messageId = message.GetUShort();
+            ushort groupId = (ushort)message.GetVarULong();
+            ushort messageId = (ushort)message.GetVarULong();
             if (RelayFilter != null && RelayFilter.ShouldRelay(messageId))
             {
                 // The message should be automatically relayed to clients instead of being handled on the server

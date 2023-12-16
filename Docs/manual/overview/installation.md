@@ -1,3 +1,7 @@
+---
+_description: How to install Riptide in your project.
+---
+
 # Installation
 
 There are a number of ways to install Riptide, depending on what you're working on and which tools you're using.
@@ -11,13 +15,13 @@ There are a number of ways to install Riptide, depending on what you're working 
 1. In your Unity project, open the Package Manager (Window > Package Manager).
 2. Click the `+` (plus) button in the top left corner of the window.
 3. Select the *Add package from git URL...* option.
-4. Enter the following URL: `https://github.com/RiptideNetworking/Riptide.git?path=/Packages/Core#2.0.0`. To install a version other than v2.0.0, replace the `2.0.0` after the `#` with your chosen version number.
+4. Enter the following URL: `https://github.com/RiptideNetworking/Riptide.git?path=/Packages/Core#2.1.2`. To install a version other than v2.1.2, replace the `2.1.2` after the `#` with your chosen version number.
 5. Click 'Add' and wait for Riptide to be installed.
 
 If you have errors in your project after installation or intellisense isn't working for Riptide's classes, go to Edit > Preferences > External Tools, make sure the box next to *Git packages* is checked, and then click *Regenerate project files*.
 
 > [!TIP]
-> If you'd like to use the latest in-development version of Riptide (from the dev branch) instead of an official release, enter `https://github.com/RiptideNetworking/Riptide.git?path=/Packages/Core#unity-package` in the git URL field. Keep in mind that doing this will get you the latest state of the repository, **which may include bugs and incomplete features!**
+> If you'd like to use the latest in-development version of Riptide instead of an official release, enter `https://github.com/RiptideNetworking/Riptide.git?path=/Packages/Core#unity-package` in the git URL field. Keep in mind that doing this will get you the latest state of the repository, **which may include bugs and incomplete features!**
 
 ### Option 2: DLL File
 
@@ -36,7 +40,7 @@ If you prefer not to use Unity's Package Manager or that option doesn't work for
 
 The following installation steps are for Visual Studio users and may differ if you use a different IDE.
 
-### Option 1: NuGet Package
+### Option 1: [NuGet Package](https://www.nuget.org/packages/RiptideNetworking.Riptide)
 
 1. Right click your solution in the Solution Explorer.
 2. Select *Manage NuGet Packages for Solution...*

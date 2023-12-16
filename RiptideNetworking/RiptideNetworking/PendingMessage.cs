@@ -18,20 +18,16 @@ namespace Riptide
 
         /// <summary>The multiplier used to determine how long to wait before resending a pending message.</summary>
         private const float RetryTimeMultiplier = 1.2f;
-        /// <summary>How often to try sending the message before giving up.</summary>
-        private const int MaxSendAttempts = 15; // TODO: get rid of this
 
         /// <summary>A pool of reusable <see cref="PendingMessage"/> instances.</summary>
         private static readonly List<PendingMessage> pool = new List<PendingMessage>();
 
         /// <summary>The <see cref="Connection"/> to use to send (and resend) the pending message.</summary>
         private Connection connection;
-        /// <summary>The sequence ID of the message.</summary>
-        private ushort sequenceId;
         /// <summary>The contents of the message.</summary>
         private readonly byte[] data;
-        /// <summary>The length in bytes of the data that has been written to the message.</summary>
-        private int writtenLength;
+        /// <summary>The length in bytes of the message.</summary>
+        private int size;
         /// <summary>How many send attempts have been made so far.</summary>
         private byte sendAttempts;
         /// <summary>Whether the pending message has been cleared or not.</summary>
@@ -53,12 +49,10 @@ namespace Riptide
         {
             PendingMessage pendingMessage = RetrieveFromPool();
             pendingMessage.connection = connection;
-            pendingMessage.sequenceId = sequenceId;
 
-            pendingMessage.data[0] = message.Bytes[0]; // Copy message header
-            Converter.FromUShort(sequenceId, pendingMessage.data, 1); // Insert sequence ID
-            Array.Copy(message.Bytes, 3, pendingMessage.data, 3, message.WrittenLength - 3); // Copy the rest of the message
-            pendingMessage.writtenLength = message.WrittenLength;
+            message.SetBits(sequenceId, sizeof(ushort) * Converter.BitsPerByte, Message.HeaderBits);
+            pendingMessage.size = message.BytesInUse;
+            Buffer.BlockCopy(message.Data, 0, pendingMessage.data, 0, pendingMessage.size);
 
             pendingMessage.sendAttempts = 0;
             pendingMessage.wasCleared = false;
@@ -79,6 +73,12 @@ namespace Riptide
                 message = new PendingMessage();
 
             return message;
+        }
+
+        /// <summary>Empties the pool. Does not affect <see cref="PendingMessage"/> instances which are actively pending and therefore not in the pool.</summary>
+        public static void ClearPool()
+        {
+            pool.Clear();
         }
 
         /// <summary>Returns the <see cref="PendingMessage"/> instance to the pool so it can be reused.</summary>
@@ -102,36 +102,27 @@ namespace Riptide
                 if (LastSendTime + (connection.SmoothRTT < 0 ? 25 : connection.SmoothRTT / 2) <= time) // Avoid triggering a resend if the latest resend was less than half a RTT ago
                     TrySend();
                 else
-                    connection.Peer.ExecuteLater(connection.SmoothRTT < 0 ? 50 : (long)Math.Max(10, connection.SmoothRTT * RetryTimeMultiplier), new PendingMessageResendEvent(this, time));
+                    connection.Peer.ExecuteLater(connection.SmoothRTT < 0 ? 50 : (long)Math.Max(10, connection.SmoothRTT * RetryTimeMultiplier), new ResendEvent(this, time));
             }
         }
 
         /// <summary>Attempts to send the message.</summary>
         internal void TrySend()
         {
-            if (sendAttempts >= MaxSendAttempts)
+            if (sendAttempts >= connection.MaxSendAttempts && connection.CanQualityDisconnect)
             {
-                // Send attempts exceeds max send attempts, so give up
-                if (RiptideLogger.IsWarningLoggingEnabled)
-                {
-                    MessageHeader header = (MessageHeader)data[0];
-                    if (header == MessageHeader.Reliable)
-                        RiptideLogger.Log(LogType.Warning, connection.Peer.LogName, $"No ack received for {header} message (ID: {Converter.ToUShort(data, 3)}) after {sendAttempts} {Helper.CorrectForm(sendAttempts, "attempt")}, delivery may have failed!");
-                    else
-                        RiptideLogger.Log(LogType.Warning, connection.Peer.LogName, $"No ack received for internal {header} message after {sendAttempts} {Helper.CorrectForm(sendAttempts, "attempt")}, delivery may have failed!");
-                }
-
-                connection.ClearMessage(sequenceId);
+                RiptideLogger.Log(LogType.Info, connection.Peer.LogName, $"Could not guarantee delivery of a {(MessageHeader)(data[0] & Message.HeaderBitmask)} message after {sendAttempts} attempts! Disconnecting...");
+                connection.Peer.Disconnect(connection, DisconnectReason.PoorConnection);
                 return;
             }
 
-            connection.Send(data, writtenLength);
-            connection.Metrics.SentReliable(writtenLength);
+            connection.Send(data, size);
+            connection.Metrics.SentReliable(size);
 
             LastSendTime = connection.Peer.CurrentTime;
             sendAttempts++;
 
-            connection.Peer.ExecuteLater(connection.SmoothRTT < 0 ? 50 : (long)Math.Max(10, connection.SmoothRTT * RetryTimeMultiplier), new PendingMessageResendEvent(this, connection.Peer.CurrentTime));
+            connection.Peer.ExecuteLater(connection.SmoothRTT < 0 ? 50 : (long)Math.Max(10, connection.SmoothRTT * RetryTimeMultiplier), new ResendEvent(this, connection.Peer.CurrentTime));
         }
 
         /// <summary>Clears the message.</summary>
