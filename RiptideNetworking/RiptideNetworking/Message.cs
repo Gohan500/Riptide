@@ -131,7 +131,19 @@ namespace Riptide
         /// <returns>An empty message instance.</returns>
         public static Message Create()
         {
-            return RetrieveFromPool().PrepareForUse();
+            Message message = RetrieveFromPool();
+            message.readBit = 0;
+            message.writeBit = 0;
+            return message;
+        }
+        /// <summary>Gets a message instance that can be used for sending.</summary>
+        /// <param name="sendMode">The mode in which the message should be sent.</param>
+        /// <returns>A message instance ready to be sent.</returns>
+        /// <remarks>This method is primarily intended for use with <see cref="MessageSendMode.Notify"/> as notify messages don't have a built-in message ID, and unlike
+        /// <see cref="Create(MessageSendMode, ushort, ushort)"/> and <see cref="Create(MessageSendMode, Enum)"/>, this overload does not add a message ID to the message.</remarks>
+        public static Message Create(MessageSendMode sendMode)
+        {
+            return RetrieveFromPool().Init((MessageHeader)sendMode);
         }
         /// <summary>Gets a message instance that can be used for sending.</summary>
         /// <param name="sendMode">The mode in which the message should be sent.</param>
