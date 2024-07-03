@@ -194,4 +194,161 @@ namespace Riptide
             return $"Message handler methods '{method1.DeclaringType.Name}.{method1.Name}' and '{method2.DeclaringType.Name}.{method2.Name}' are both set to handle messages with ID {id}! Only one handler method is allowed per message ID!";
         }
     }
+
+    /// <summary>The Exception that is thrown when a Type that has the <see cref="SerializableDataAttribute"/>, does not inherit from <see cref="IMessageSerializable"/>.</summary>
+    public class SerializableInheritanceException : Exception
+    {
+        /// <summary>The Type which this exception is about.</summary>
+        public readonly Type DeclaringType;
+
+        /// <summary>Initializes a new <see cref="SerializableInheritanceException"/> instance with a specified error message.</summary>
+        public SerializableInheritanceException() { }
+        /// <summary>Initializes a new <see cref="SerializableInheritanceException"/> instance with a specified error message.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        public SerializableInheritanceException(string message) : base(message) { }
+        /// <summary>Initializes a new <see cref="SerializableInheritanceException"/> instance with a specified error message and a reference to the inner exception that is the cause of this exception.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        /// <param name="inner">The exception that is the cause of the current exception. If <paramref name="inner"/> is not a null reference, the current exception is raised in a catch block that handles the inner exception.</param>
+        public SerializableInheritanceException(string message, Exception inner) : base(message, inner) { }
+
+        /// <summary>Initializes a new <see cref="SerializableInheritanceException"/> instance and constructs an error message from the given information.</summary>
+        /// <param name="type">The Type which this exception is about.</param>
+        public SerializableInheritanceException(Type type) : base(GetErrorMessage(type))
+        {
+            DeclaringType = type;
+        }
+
+        private static string GetErrorMessage(Type type)
+        {
+            return $"Type '{type.Name}' has the Riptide Serializable Attribute but does not inherit from IMessageSerializable";
+        }
+    }
+
+    /// <summary>The Exception that is thrown when multple classes with <see cref="SerializableDataAttribute"/>s that have the same ID.</summary>
+    public class DuplicateSerializableIdException : Exception
+    {
+        /// <summary>The ID with multiple types.</summary>
+        public readonly ushort Id;
+        /// <summary>The first type with the <see cref="SerializableDataAttribute"/>.</summary>
+        public readonly Type DeclaringType1;
+        /// <summary>The second type with the <see cref="SerializableDataAttribute"/>.</summary>
+        public readonly Type DeclaringType2;
+
+        /// <summary>Initializes a new <see cref="DuplicateSerializableIdException"/> instance with a specified error message.</summary>
+        public DuplicateSerializableIdException() { }
+        /// <summary>Initializes a new <see cref="DuplicateSerializableIdException"/> instance with a specified error message.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        public DuplicateSerializableIdException(string message) : base(message) { }
+        /// <summary>Initializes a new <see cref="DuplicateSerializableIdException"/> instance with a specified error message and a reference to the inner exception that is the cause of this exception.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        /// <param name="inner">The exception that is the cause of the current exception. If <paramref name="inner"/> is not a null reference, the current exception is raised in a catch block that handles the inner exception.</param>
+        public DuplicateSerializableIdException(string message, Exception inner) : base(message, inner) { }
+        /// <summary>Initializes a new <see cref="DuplicateSerializableIdException"/> instance and constructs an error message from the given information.</summary>
+        /// <param name="id">The ID with multiple types.</param>
+        /// <param name="declaringType1">The first type with the <see cref="SerializableDataAttribute"/>.</param>
+        /// <param name="declaringType2">The second type with the <see cref="SerializableDataAttribute"/>.</param>
+        public DuplicateSerializableIdException(ushort id, Type declaringType1, Type declaringType2) : base(GetErrorMessage(id, declaringType1, declaringType2))
+        {
+            Id = id;
+            DeclaringType1 = declaringType1;
+            DeclaringType2 = declaringType2;
+        }
+
+        private static string GetErrorMessage(ushort id, Type declaringType1, Type declaringType2)
+        {
+            return $"Types '{declaringType1.Name}' and '{declaringType2.Name}' both have declared the same ID {id}! Only one type is allowed per ID.";
+        }
+    }
+    
+    /// <summary>The Exception that is thrown when multple classes with <see cref="SerializableDataAttribute"/>s that have the same ID.</summary>
+    public class DuplicateSerializableException : Exception
+    {
+        /// <summary>The Type that has multiple ids</summary>
+        public readonly Type DeclaringType;
+        /// <summary>The first id</summary>
+        public readonly ushort Id1;
+        /// <summary>The second id</summary>
+        public readonly ushort Id2;
+
+        /// <summary>Initializes a new <see cref="DuplicateSerializableException"/> instance with a specified error message.</summary>
+        public DuplicateSerializableException() { }
+        /// <summary>Initializes a new <see cref="DuplicateSerializableException"/> instance with a specified error message.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        public DuplicateSerializableException(string message) : base(message) { }
+        /// <summary>Initializes a new <see cref="DuplicateSerializableException"/> instance with a specified error message and a reference to the inner exception that is the cause of this exception.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        /// <param name="inner">The exception that is the cause of the current exception. If <paramref name="inner"/> is not a null reference, the current exception is raised in a catch block that handles the inner exception.</param>
+        public DuplicateSerializableException(string message, Exception inner) : base(message, inner) { }
+        /// <summary>Initializes a new <see cref="DuplicateSerializableException"/> instance and constructs an error message from the given information.</summary>
+        /// <param name="declaringType">The Type that has multiple ids</param>
+        /// <param name="id1">The first id</param>
+        /// <param name="id2">The second id</param>
+        public DuplicateSerializableException(Type declaringType, ushort id1, ushort id2) : base(GetErrorMessage(declaringType, id1, id2))
+        {
+            DeclaringType = declaringType;
+            Id1 = id1;
+            Id2 = id2;
+        }
+
+        private static string GetErrorMessage(Type declaringType, ushort id1, ushort id2)
+        {
+            return $"Id '{id1}' and '{id2}' both are declared on the same Type {declaringType.Name}. One Type can only have one Id.";
+        }
+    }
+
+    /// <summary>The Exception that is thrown when an invalid Id is used in the lookup</summary>
+    public class InvalidSerializableIdException : Exception
+    {
+        /// <summary>The invalid Id</summary>
+        public readonly ushort Id;
+
+        /// <summary>Initializes a new <see cref="InvalidSerializableIdException"/> instance with a specified error message.</summary>
+        public InvalidSerializableIdException() { }
+        /// <summary>Initializes a new <see cref="InvalidSerializableIdException"/> instance with a specified error message.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        public InvalidSerializableIdException(string message) : base(message) { }
+        /// <summary>Initializes a new <see cref="InvalidSerializableIdException"/> instance with a specified error message and a reference to the inner exception that is the cause of this exception.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        /// <param name="inner">The exception that is the cause of the current exception. If <paramref name="inner"/> is not a null reference, the current exception is raised in a catch block that handles the inner exception.</param>
+        public InvalidSerializableIdException(string message, Exception inner) : base(message, inner) { }
+        /// <summary>Initializes a new <see cref="InvalidSerializableIdException"/> instance and constructs an error message from the given information.</summary>
+        /// <param name="id">The invalid Id</param>
+        public InvalidSerializableIdException(ushort id) : base(GetErrorMessage(id))
+        {
+            Id = id;
+        }
+
+        private static string GetErrorMessage(ushort id)
+        {
+            return $"The ID {id} is not currently registered with a serializable.";
+        }
+    }
+    
+    /// <summary>The Exception that is thrown when an unknown serializable is used</summary>
+    public class InvalidSerializableException : Exception
+    {
+        /// <summary>The invalid Type</summary>
+        public readonly Type Type;
+
+        /// <summary>Initializes a new <see cref="InvalidSerializableException"/> instance with a specified error message.</summary>
+        public InvalidSerializableException() { }
+        /// <summary>Initializes a new <see cref="InvalidSerializableException"/> instance with a specified error message.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        public InvalidSerializableException(string message) : base(message) { }
+        /// <summary>Initializes a new <see cref="InvalidSerializableException"/> instance with a specified error message and a reference to the inner exception that is the cause of this exception.</summary>
+        /// <param name="message">The error message that explains the reason for the exception.</param>
+        /// <param name="inner">The exception that is the cause of the current exception. If <paramref name="inner"/> is not a null reference, the current exception is raised in a catch block that handles the inner exception.</param>
+        public InvalidSerializableException(string message, Exception inner) : base(message, inner) { }
+        /// <summary>Initializes a new <see cref="InvalidSerializableException"/> instance and constructs an error message from the given information.</summary>
+        /// <param name="type">The invalid Type</param>
+        public InvalidSerializableException(Type type) : base(GetErrorMessage(type))
+        {
+            Type = type;
+        }
+
+        private static string GetErrorMessage(Type type)
+        {
+            return $"The Type '{type.Name}' is not a registered serializable.";
+        }
+    }
 }

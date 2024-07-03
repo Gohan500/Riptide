@@ -40,6 +40,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <UPMSourceFiles Remove="MessageSerializableManager.cs" />
+    <UPMSourceFiles Remove="SerializableDataAttribute.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\nuget-readme.md">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>

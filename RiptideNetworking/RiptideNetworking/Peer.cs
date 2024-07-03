@@ -89,6 +89,7 @@ namespace Riptide
         public Peer(string logName)
         {
             LogName = logName;
+            MessageSerializableManager.FindSerializables();
         }
 
         /// <summary>Retrieves methods marked with <see cref="MessageHandlerAttribute"/>.</summary>

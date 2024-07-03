@@ -14,5 +14,7 @@ namespace Riptide
         /// <summary>Retrieves the type from the message.</summary>
         /// <param name="message">The message to retrieve the type from.</param>
         void Deserialize(Message message);
+        /// <summary>Returns the size of the serializable in bits</summary>
+        int GetDataSize();
     }
 }

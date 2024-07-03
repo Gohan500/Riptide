@@ -7,6 +7,7 @@ using Riptide.Transports;
 using Riptide.Utils;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -1753,6 +1754,17 @@ namespace Riptide
             return this;
         }
 
+        /// <summary>Adds a serializable to the message.</summary>
+        /// <param name="value">The serializable to add.</param>
+        /// <returns>The message that the serializable was added to.</returns>
+        public Message AddSerializable(IMessageSerializable value)
+        {
+            AddVarULong(MessageSerializableManager.GetId(value.GetType()));
+
+            value.Serialize(this);
+            return this;
+        }
+
         /// <summary>Retrieves a serializable from the message.</summary>
         /// <returns>The serializable that was retrieved.</returns>
         public T GetSerializable<T>() where T : IMessageSerializable, new()
@@ -1762,24 +1774,97 @@ namespace Riptide
             return t;
         }
 
+        /// <summary>Retrieves a serializable and auto resolves it to the correct type.</summary>
+        /// <returns>The autoresolved <see cref="IMessageSerializable"/>.</returns>
+        public IMessageSerializable GetSerializable()
+        {
+            ushort id = (ushort)GetVarULong();
+            IMessageSerializable serializable = Activator.CreateInstance(MessageSerializableManager.GetSerializable(id)) as IMessageSerializable;
+            serializable.Deserialize(this);
+            return serializable;
+        }
+
         /// <summary>Adds an array of serializables to the message.</summary>
         /// <param name="array">The array to add.</param>
         /// <param name="includeLength">Whether or not to include the length of the array in the message.</param>
+        /// <param name="errorOnTooBig">Whether or not an error should be thrown if the array is too big.</param>
+        /// <param name="rest">The remaining serializables that remain if no error is thrown.</param>
         /// <returns>The message that the array was added to.</returns>
-        public Message AddSerializables<T>(T[] array, bool includeLength = true) where T : IMessageSerializable
+        public Message AddSerializables<T>(T[] array, out T[] rest, bool includeLength = true, bool errorOnTooBig = true) where T : IMessageSerializable
         {
-            if (includeLength)
-                AddVarULong((uint)array.Length);
+            rest = null;
+            int writepos = 0;
 
-            for (int i = 0; i < array.Length; i++)
+            if (includeLength)
+            {
+                writepos = WrittenBits;
+                ReserveBits(sizeof(int) * Converter.BitsPerByte);
+            }
+
+            if (UnwrittenBits < array[0].GetDataSize() * array.Length && errorOnTooBig)
+                throw new InsufficientCapacityException(this, array.Length, typeof(T).Name, array[0].GetDataSize() * array.Length);
+
+            for (uint i = 0; i < array.Length; i++)
+            {
+                if(!errorOnTooBig && UnwrittenBits < array[i].GetDataSize())
+                {
+                    if (includeLength)
+                        SetBits(i, sizeof(int) * Converter.BitsPerByte, writepos);
+
+                    rest = new T[array.Length - i];
+                    Array.Copy(array, i, rest, 0, array.Length - i);
+                    break;
+                }
+
                 AddSerializable(array[i]);
+            }
+
+            return this;
+        }
+
+        /// <summary>Adds an array of serializables to the message.</summary>
+        /// <param name="array">The array to add.</param>
+        /// <param name="includeLength">Whether or not to include the length of the array in the message.</param>
+        /// <param name="errorOnTooBig">Whether or not an error should be thrown if the array is too big.</param>
+        /// <param name="rest">The remaining serializables that remain if no error is thrown.</param>
+        /// <returns>The message that the array was added to.</returns>
+        public Message AddSerializables(IMessageSerializable[] array, out IMessageSerializable[] rest, bool includeLength = true, bool errorOnTooBig = true)
+        {
+            rest = null;
+            int writepos = -1;
+
+            if (includeLength)
+            {
+                writepos = WrittenBits;
+                ReserveBits(sizeof(int) * Converter.BitsPerByte);
+            }
+
+            for (uint i = 0; i < array.Length; i++)
+            {
+                if (UnwrittenBits < array[i].GetDataSize())
+                {
+                    if (errorOnTooBig)
+                        throw new InsufficientCapacityException(this, array[i].GetType().Name, array[i].GetDataSize());
+                    else
+                    {
+                        if (includeLength)
+                            SetBits(i, sizeof(int) * Converter.BitsPerByte, writepos);
+
+                        rest = new IMessageSerializable[array.Length - i];
+                        Array.Copy(array, i, rest, 0, array.Length - i);
+                        break;
+                    }
+                }
+
+                AddSerializable(array[i]);
+            }
 
             return this;
         }
 
         /// <summary>Retrieves an array of serializables from the message.</summary>
         /// <returns>The array that was retrieved.</returns>
-        public T[] GetSerializables<T>() where T : IMessageSerializable, new() => GetSerializables<T>((int)GetVarULong());
+        public T[] GetSerializables<T>() where T : IMessageSerializable, new() => GetSerializables<T>(GetInt());
         /// <summary>Retrieves an array of serializables from the message.</summary>
         /// <param name="amount">The amount of serializables to retrieve.</param>
         /// <returns>The array that was retrieved.</returns>
@@ -1792,7 +1877,7 @@ namespace Riptide
         /// <summary>Populates an array of serializables retrieved from the message.</summary>
         /// <param name="intoArray">The array to populate.</param>
         /// <param name="startIndex">The position at which to start populating the array.</param>
-        public void GetSerializables<T>(T[] intoArray, int startIndex = 0) where T : IMessageSerializable, new() => GetSerializables<T>((int)GetVarULong(), intoArray, startIndex);
+        public void GetSerializables<T>(T[] intoArray, int startIndex = 0) where T : IMessageSerializable, new() => GetSerializables<T>(GetInt(), intoArray, startIndex);
         /// <summary>Populates an array of serializables retrieved from the message.</summary>
         /// <param name="amount">The amount of serializables to retrieve.</param>
         /// <param name="intoArray">The array to populate.</param>
@@ -1805,6 +1890,34 @@ namespace Riptide
             ReadSerializables(amount, intoArray, startIndex);
         }
 
+        /// <summary>Retrieves an array of serializables from the message.</summary>
+        /// <returns>The array that was retrieved.</returns>
+        public IMessageSerializable[] GetSerializables() => GetSerializables(GetInt());
+        /// <summary>Retrieves an array of serializables from the message.</summary>
+        /// <param name="amount">The amount of serializables to retrieve.</param>
+        /// <returns>The array that was retrieved.</returns>
+        public IMessageSerializable[] GetSerializables(int amount)
+        {
+            IMessageSerializable[] array = new IMessageSerializable[amount];
+            ReadSerializables(amount, array);
+            return array;
+        }
+        /// <summary>Populates an array of serializables retrieved from the message.</summary>
+        /// <param name="intoArray">The array to populate.</param>
+        /// <param name="startIndex">The position at which to start populating the array.</param>
+        public void GetSerializables(IMessageSerializable[] intoArray, int startIndex = 0) => GetSerializables(GetInt(), intoArray, startIndex);
+        /// <summary>Populates an array of serializables retrieved from the message.</summary>
+        /// <param name="amount">The amount of serializables to retrieve.</param>
+        /// <param name="intoArray">The array to populate.</param>
+        /// <param name="startIndex">The position at which to start populating the array.</param>
+        public void GetSerializables(int amount, IMessageSerializable[] intoArray, int startIndex = 0)
+        {
+            if (startIndex + amount > intoArray.Length)
+                throw new ArgumentException(nameof(amount), ArrayNotLongEnoughError(amount, intoArray.Length, startIndex, typeof(IMessageSerializable).Name));
+
+            ReadSerializables(amount, intoArray, startIndex);
+        }
+
         /// <summary>Reads a number of serializables from the message and writes them into the given array.</summary>
         /// <param name="amount">The amount of serializables to read.</param>
         /// <param name="intoArray">The array to write the serializables into.</param>
@@ -1813,6 +1926,16 @@ namespace Riptide
         {
             for (int i = 0; i < amount; i++)
                 intoArray[startIndex + i] = GetSerializable<T>();
+        }
+
+        /// <summary>Reads a number of serializables from the message and writes them into the given array.</summary>
+        /// <param name="amount">The amount of serializables to read.</param>
+        /// <param name="intoArray">The array to write the serializables into.</param>
+        /// <param name="startIndex">The position at which to start writing into <paramref name="intoArray"/>.</param>
+        private void ReadSerializables(int amount, IMessageSerializable[] intoArray, int startIndex = 0)
+        {
+            for (int i = 0; i < amount; i++)
+                intoArray[startIndex + i] = GetSerializable();
         }
         #endregion
 
@@ -1869,7 +1992,10 @@ namespace Riptide
         /// <remarks>This method is simply an alternative way of calling <see cref="AddSerializable{T}(T)"/>.</remarks>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Message Add<T>(T value) where T : IMessageSerializable => AddSerializable(value);
-
+        /// <inheritdoc cref="AddSerializable(IMessageSerializable)"/>
+        /// <remarks>This method is simply an alternative way of calling <see cref="AddSerializable(IMessageSerializable)"/>.</remarks>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Message Add(IMessageSerializable value) => AddSerializable(value);
         /// <inheritdoc cref="AddBytes(byte[], bool)"/>
         /// <remarks>This method is simply an alternative way of calling <see cref="AddBytes(byte[], bool)"/>.</remarks>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1918,10 +2044,14 @@ namespace Riptide
         /// <remarks>This method is simply an alternative way of calling <see cref="AddStrings(string[], bool)"/>.</remarks>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Message Add(string[] array, bool includeLength = true) => AddStrings(array, includeLength);
-        /// <inheritdoc cref="AddSerializables{T}(T[], bool)"/>
-        /// <remarks>This method is simply an alternative way of calling <see cref="AddSerializables{T}(T[], bool)"/>.</remarks>
+        /// <inheritdoc cref="AddSerializables{T}(T[], out T[], bool, bool)"/>
+        /// <remarks>This method is simply an alternative way of calling <see cref="AddSerializables{T}(T[], out T[], bool, bool)"/>.</remarks>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public Message Add<T>(T[] array, bool includeLength = true) where T : IMessageSerializable, new() => AddSerializables(array, includeLength);
+        public Message Add<T>(T[] array, out T[] rest, bool includeLength = true, bool errorOnTooBig = true) where T : IMessageSerializable, new() => AddSerializables(array, out rest, includeLength, errorOnTooBig);
+        /// <inheritdoc cref="AddSerializables(IMessageSerializable[], out IMessageSerializable[], bool, bool)"/>
+        /// <remarks>This method is simply an alternative way of calling <see cref="AddSerializables(IMessageSerializable[], out IMessageSerializable[], bool, bool)"/>.</remarks>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Message Add(IMessageSerializable[] array, out IMessageSerializable[] rest, bool includeLength = true, bool errorOnTooBig = true) => AddSerializables(array, out rest, includeLength, errorOnTooBig);
         #endregion
         #endregion
 
